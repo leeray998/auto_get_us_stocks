@@ -11,19 +11,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10' # 必须 3.10+ 解决 yfinance 报错
 
       - name: Install dependencies
-        run: pip install yfinance pandas tabulate
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas tabulate
 
       - name: Run Analysis
         run: |
           echo "## 📊 财报动能回溯分析报告" >> $GITHUB_STEP_SUMMARY
-          echo "分析时间节点: $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "**查询基准日期:** $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           python analyze.py >> $GITHUB_STEP_SUMMARY
