@@ -5,18 +5,25 @@ on:
     paths:
       - 'stocks.txt'
       - 'config.txt'
-  workflow_dispatch: # 同时也保留手动点击按钮运行的功能
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
         run: pip install yfinance pandas tabulate
+
       - name: Run Analysis
-        run: python analyze.py >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "## 📊 财报动能回溯分析报告" >> $GITHUB_STEP_SUMMARY
+          echo "分析时间节点: $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          python analyze.py >> $GITHUB_STEP_SUMMARY
