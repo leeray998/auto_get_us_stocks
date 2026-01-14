@@ -1,0 +1,22 @@
+name: 自动财报回溯分析
+
+on:
+  push:
+    paths:
+      - 'stocks.txt'
+      - 'config.txt'
+  workflow_dispatch: # 同时也保留手动点击按钮运行的功能
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install yfinance pandas tabulate
+      - name: Run Analysis
+        run: python analyze.py >> $GITHUB_STEP_SUMMARY
