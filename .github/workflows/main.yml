@@ -14,11 +14,8 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 需求 1: 等待 2 分钟后再运行
       - name: Wait for 2 minutes
-        run: |
-          echo "等待 120 秒以确保数据同步或多文件连续修改完成..."
-          sleep 120
+        run: sleep 120
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,31 +29,33 @@ jobs:
 
       - name: Run Analysis
         run: |
-          # 需求 2: 生成结果文件 report.md
-          echo "## 📊 财报动能回溯分析报告" > report.md
-          echo "**查询基准日期:** $(cat config.txt)" >> report.md
-          echo "" >> report.md
-          python analyze.py >> report.md
-          
-          # 同时也将结果输出到 Summary 方便在线看
-          cat report.md >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 财报动能回溯分析报告" >> $GITHUB_STEP_SUMMARY
+          echo "基准日期: $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          python analyze.py >> $GITHUB_STEP_SUMMARY
 
-      # 需求 3: 保存结果文件供下载 (在 Actions 页面底部下载)
-      - name: Upload Artifact
+      # 将结果保存为 Artifact (网页端备份)
+      - name: Upload CSV Result
         uses: actions/upload-artifact@v4
         with:
-          name: stock-report-${{ github.run_id }}
-          path: report.md
+          name: Stock_Report_CSV
+          path: report.csv
 
-      # 需求 4: 发送 Telegram 通知 (可选，需配置 Secret)
-      - name: Send Telegram Notification
-        if: env.TG_TOKEN != '' && env.TG_CHAT_ID != ''
+      # 需求实现：直接发送文件到 Telegram
+      - name: Send Document to Telegram
+        if: env.TG_TOKEN != '' && env.TG_ID != ''
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 发送简短通知
-          MSG="✅ 财报分析完成！日期: $(cat config.txt)。请前往 GitHub Actions 下载详细报告。"
+          DATE=$(cat config.txt)
+          # 发送文字通知
           curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d "chat_id=${TG_CHAT_ID}" \
-            -d "text=${MSG}"
+            -d "chat_id=${TG_ID}" \
+            -d "text=✅ $DATE 的财报回溯分析已完成，文件见下方："
+          
+          # 发送 CSV 文件
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
+            -F "chat_id=${TG_ID}" \
+            -F "document=@report.csv" \
+            -F "caption=Stock_Report_$DATE.csv"
