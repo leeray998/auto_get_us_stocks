@@ -14,6 +14,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 延迟 2 分钟运行
       - name: Wait for 2 minutes
         run: sleep 120
 
@@ -32,30 +33,38 @@ jobs:
           echo "## 📊 财报动能回溯分析报告" >> $GITHUB_STEP_SUMMARY
           echo "基准日期: $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          # 运行 Python 脚本
           python analyze.py >> $GITHUB_STEP_SUMMARY
 
-      # 将结果保存为 Artifact (网页端备份)
-      - name: Upload CSV Result
+      # 将结果保存为网页端 Artifact 备份
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Stock_Report_CSV
           path: report.csv
 
-      # 需求实现：直接发送文件到 Telegram
-      - name: Send Document to Telegram
+      # 发送 Telegram 消息和文件
+      - name: Send to Telegram
         if: env.TG_TOKEN != '' && env.TG_ID != ''
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           DATE=$(cat config.txt)
-          # 发送文字通知
+          
+          # 1. 发送文字通知
           curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d "chat_id=${TG_ID}" \
-            -d "text=✅ $DATE 的财报回溯分析已完成，文件见下方："
+            -d "text=✅ $DATE 的分析已完成，CSV 文件正在上传..."
+
+          # 2. 发送 CSV 文件 (修复了导致 exit code 26 的路径问题)
+          # 使用 -v 参数可以显示调试信息
+          RESPONSE=$(curl -v -F "chat_id=${TG_ID}" -F "document=@report.csv" "https://api.telegram.org/bot${TG_TOKEN}/sendDocument")
           
-          # 发送 CSV 文件
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
-            -F "chat_id=${TG_ID}" \
-            -F "document=@report.csv" \
-            -F "caption=Stock_Report_$DATE.csv"
+          echo "Telegram Response: $RESPONSE"
+          
+          # 检查是否发送成功
+          if [[ $RESPONSE != *"\"ok\":true"* ]]; then
+            echo "❌ 文件上传至 Telegram 失败"
+            exit 1
+          fi
