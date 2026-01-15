@@ -1,16 +1,12 @@
+import yfinance as yf
 import pandas as pd
 import os
-import requests
 
 def run_analysis():
-    # --- 1. 配置读取 ---
+    # 1. 读取配置
     if not os.path.exists("config.txt") or not os.path.exists("stocks.txt"):
         print("❌ 错误: 缺少配置文件")
         return
-    
-    # 填入你的 FMP API Key (免费版即可)
-    # 建议通过环境变量读取更安全，这里为了方便你直接运行
-    API_KEY = "tl86gW08UvssorqG7fRdYpvsWJKtsiqu" 
     
     with open("config.txt", "r") as f:
         target_date_str = f.read().strip()
@@ -22,73 +18,80 @@ def run_analysis():
 
     for symbol in tickers:
         try:
-            print(f"🔍 正在从 FMP 获取数据: {symbol}...")
-            # 获取最近 5 个季度的利润表 (FMP API)
-            url = f"https://financialmodelingprep.com/api/v3/income-statement/{symbol}?period=quarter&limit=8&apikey={API_KEY}"
-            response = requests.get(url)
-            data = response.json()
-
-            if not data or "Error Message" in data:
-                print(f"⚠️ {symbol} 接口返回为空或错误")
-                continue
-
-            # 转换为 DataFrame 处理日期
-            df = pd.DataFrame(data)
-            df['date'] = pd.to_datetime(df['date'])
+            print(f"🔍 正在提取 (yfinance): {symbol}...")
+            tk = yf.Ticker(symbol)
             
-            # 过滤：只保留在目标日期之前的数据
-            valid_df = df[df['date'] <= target_dt].sort_values(by='date', ascending=False)
+            # 强制从原始对象提取季度利润表
+            df_q = tk.get_financials(freq='quarterly') 
+            if df_q is None or df_q.empty:
+                # 备用：如果上面的方法不行，用旧方法
+                df_q = tk.quarterly_income_stmt
+            
+            if df_q is None or df_q.empty:
+                print(f"⚠️ {symbol} 雅虎数据库暂无数据")
+                continue
+            
+            # 转置处理：行变日期
+            df_all = df_q.T
+            df_all.index = pd.to_datetime(df_all.index).tz_localize(None)
+            df_all = df_all.sort_index(ascending=False)
+            
+            # 过滤：只看目标日期之前的数据
+            valid_df = df_all[df_all.index <= target_dt]
 
             if len(valid_df) >= 1:
-                # 提取营收和日期
-                rev_values = valid_df['revenue'].tolist()
-                date_labels = [d.strftime('%Y-%m-%d') for d in valid_df['date']]
+                # 寻找营收字段（兼容不同公司的命名习惯）
+                search_cols = ['Total Revenue', 'Operating Revenue', 'Revenue']
+                target_col = next((c for c in search_cols if c in valid_df.columns), None)
+                
+                if not target_col:
+                    print(f"⚠️ {symbol} 找不到营收列名")
+                    continue
 
-                # 补齐长度
+                rev_series = valid_df[target_col]
+                rev_values = rev_series.tolist()
+                date_labels = [d.strftime('%Y-%m-%d') for d in rev_series.index]
+
+                # 补齐到 5 个季度以便算 YoY
                 while len(rev_values) < 5:
                     rev_values.append(None)
                     date_labels.append("N/A")
 
-                # --- 计算增长率 ---
-                def calc_growth(current, previous):
-                    if current and previous and previous != 0:
-                        return f"{(current - previous) / previous:+.2%}"
+                # 计算函数
+                def calc_pct(cur, prev):
+                    if cur and prev and prev != 0:
+                        return f"{(cur - prev) / prev:+.2%}"
                     return "N/A"
 
-                qoq = calc_growth(rev_values[0], rev_values[1])
-                yoy = calc_growth(rev_values[0], rev_values[4])
-
-                # --- 构建动态行 ---
+                # 构建动态字典
                 row = {
                     "Symbol": symbol,
                     "Report_Date": date_labels[0],
                     "Rev_Latest": rev_values[0],
-                    f"Q-1 ({date_labels[1]})": rev_values[1],
-                    f"Q-2 ({date_labels[2]})": rev_values[2],
-                    f"Q-3 ({date_labels[3]})": rev_values[3],
-                    "QoQ": qoq,
-                    "YoY": yoy
+                    f"Q-1({date_labels[1]})": rev_values[1],
+                    f"Q-2({date_labels[2]})": rev_values[2],
+                    f"Q-3({date_labels[3]})": rev_values[3],
+                    "QoQ": calc_pct(rev_values[0], rev_values[1]),
+                    "YoY": calc_pct(rev_values[0], rev_values[4])
                 }
                 results.append(row)
-        except Exception as e:
-            print(f"❌ {symbol} 异常: {e}")
+                print(f"✅ {symbol} 解析完成")
 
-    # --- 3. 保存逻辑 ---
+        except Exception as e:
+            print(f"❌ {symbol} 出错: {e}")
+
+    # 3. 保存
     if results:
         final_df = pd.DataFrame(results)
-        
-        # 强制处理所有营收列为数字格式，防止科学计数法
-        numeric_cols = [c for c in final_df.columns if "Rev" in c or "(" in c]
-        for col in numeric_cols:
+        # 强制处理长数字显示问题
+        num_cols = [c for c in final_df.columns if "Rev" in c or "Q-" in c]
+        for col in num_cols:
             final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
         
-        # 导出为 CSV (float_format='%.0f' 是关键)
         final_df.to_csv("report.csv", index=False, float_format='%.0f')
-        
-        print("\n✅ 分析完成！")
-        print(final_df.to_markdown(index=False))
+        print("\n" + final_df.to_markdown(index=False))
     else:
-        print("📭 未找到数据。")
+        print("📭 没抓到任何数据，请检查 stocks.txt 里的代码是否正确。")
 
 if __name__ == "__main__":
     run_analysis()
