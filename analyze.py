@@ -71,10 +71,22 @@ def run_analysis():
             print(f"{symbol} 处理失败: {e}")
             continue
 
+    # --- 强力保存逻辑 (优化版) ---
     if results:
         final_df = pd.DataFrame(results)
-        # 导出 CSV，彻底杜绝科学计数法
+        
+        # 强制转换营收列为数字，并处理缺失值
+        cols_to_fix = ["Rev_Latest", "Rev_Q-1", "Rev_Q-2", "Rev_Q-3"]
+        for col in cols_to_fix:
+            # errors='coerce' 会把无法转的变成 NaN
+            final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
+        
+        # 导出设置：
+        # 1. float_format='%.0f' 保证不出现小数点和 E+
+        # 2. quoting=1 (csv.QUOTE_NONNUMERIC) 确保长数字被正确对待
         final_df.to_csv("report.csv", index=False, float_format='%.0f')
+        
+        print("✅ 格式优化完成！")
         print(final_df.to_markdown(index=False))
     else:
         print("未找到符合日期要求的数据。")
