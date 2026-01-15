@@ -14,19 +14,49 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 需求 1: 等待 2 分钟后再运行
+      - name: Wait for 2 minutes
+        run: |
+          echo "等待 120 秒以确保数据同步或多文件连续修改完成..."
+          sleep 120
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # 必须 3.10+ 解决 yfinance 报错
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas tabulate
+          pip install yfinance pandas tabulate requests
 
       - name: Run Analysis
         run: |
-          echo "## 📊 财报动能回溯分析报告" >> $GITHUB_STEP_SUMMARY
-          echo "**查询基准日期:** $(cat config.txt)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          python analyze.py >> $GITHUB_STEP_SUMMARY
+          # 需求 2: 生成结果文件 report.md
+          echo "## 📊 财报动能回溯分析报告" > report.md
+          echo "**查询基准日期:** $(cat config.txt)" >> report.md
+          echo "" >> report.md
+          python analyze.py >> report.md
+          
+          # 同时也将结果输出到 Summary 方便在线看
+          cat report.md >> $GITHUB_STEP_SUMMARY
+
+      # 需求 3: 保存结果文件供下载 (在 Actions 页面底部下载)
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-report-${{ github.run_id }}
+          path: report.md
+
+      # 需求 4: 发送 Telegram 通知 (可选，需配置 Secret)
+      - name: Send Telegram Notification
+        if: env.TG_TOKEN != '' && env.TG_CHAT_ID != ''
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          # 发送简短通知
+          MSG="✅ 财报分析完成！日期: $(cat config.txt)。请前往 GitHub Actions 下载详细报告。"
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d "chat_id=${TG_CHAT_ID}" \
+            -d "text=${MSG}"
