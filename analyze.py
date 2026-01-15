@@ -3,102 +3,93 @@ import pandas as pd
 import os
 
 def run_analysis():
-    # 1. 检查必要配置文件
-    if not os.path.exists("config.txt") or not os.path.exists("stocks.txt"):
-        print("❌ 错误: 缺少 config.txt 或 stocks.txt")
-        return
-    
-    # 读取目标日期（以此日期为基准回溯）
-    with open("config.txt", "r") as f:
-        target_date_str = f.read().strip()
-    
-    # 读取股票代码列表
-    with open("stocks.txt", "r") as f:
-        tickers = [line.strip().upper() for line in f if line.strip()]
+    # 1. 读取配置
+    if not os.path.exists("config.txt") or not os.path.exists("stocks.txt"):
+        print("Error: config.txt or stocks.txt missing")
+        return
+    
+    with open("config.txt", "r") as f:
+        target_date_str = f.read().strip()
+    with open("stocks.txt", "r") as f:
+        tickers = [line.strip() for line in f if line.strip()]
 
-    # 将输入的字符串日期转为标准时间格式
-    target_dt = pd.to_datetime(target_date_str)
-    results = []
+    # 将输入的字符串日期转为 Pandas 时间格式，方便对比
+    target_dt = pd.to_datetime(target_date_str)
 
-    for symbol in tickers:
-        try:
-            print(f"🔍 正在获取数据: {symbol}...")
-            tk = yf.Ticker(symbol)
-            
-            # 获取季度利润表
-            df_q = tk.quarterly_income_stmt
-            if df_q is None or df_q.empty:
-                print(f"⚠️ {symbol} 无法获取报表数据")
-                continue
-            
-            # --- 数据清洗与对齐 ---
-            # 转置并确保索引是去掉时区的日期格式
-            df_all = df_q.T
-            df_all.index = pd.to_datetime(df_all.index).tz_localize(None)
-            # 按日期从新到旧排列
-            df_all = df_all.sort_index(ascending=False)
-            
-            # 过滤：只保留在 target_dt 之前（含当天）的数据
-            valid_df = df_all[df_all.index <= target_dt]
+    results = []
+    for symbol in tickers:
+        try:
+            print(f"正在分析: {symbol}...")
+            tk = yf.Ticker(symbol)
+            # 获取原始报表
+            df_q = tk.quarterly_income_stmt
+            if df_q is None or df_q.empty:
+                continue
+            
+            # 转置：行变成日期，列变成科目
+            df_all = df_q.T
+            # 确保索引是日期格式（去掉时区干扰）
+            df_all.index = pd.to_datetime(df_all.index).tz_localize(None)
+            # 按日期从新到旧排序
+            df_all = df_all.sort_index(ascending=False)
+            
+            # 【关键修改】：过滤掉所有晚于 target_date 的数据
+            # 这样剩下的第一行就是“目标日期前最近的一期财报”
+            valid_df = df_all[df_all.index <= target_dt]
 
-            if len(valid_df) >= 1:
-                # 提取营收序列和对应的日期序列
-                # 使用 .get 确保即使字段名细微不同也能抓到数据
-                raw_revs = valid_df.get('Total Revenue', pd.Series())
-                rev_values = raw_revs.tolist()
-                date_labels = [d.strftime('%Y-%m-%d') for d in raw_revs.index]
+            if len(valid_df) >= 1:
+                # 尝试取 5 个季度的数据（前 4 个展示，第 5 个算同比）
+                revs = []
+                for i in range(5):
+                    if len(valid_df) > i:
+                        val = valid_df['Total Revenue'].iloc[i]
+                        revs.append(val if pd.notna(val) else None)
+                    else:
+                        revs.append(None)
 
-                # 补齐长度，至少需要 5 个季度算同比（Latest, Q-1, Q-2, Q-3, LastYear）
-                while len(rev_values) < 5:
-                    rev_values.append(None)
-                    date_labels.append("N/A")
+                # 计算 QoQ
+                qoq_str = "N/A"
+                if revs[0] and revs[1]:
+                    qoq_str = f"{(revs[0] - revs[1]) / revs[1]:+.2%}"
 
-                # --- 计算增长率 ---
-                def calc_growth(current, previous):
-                    if current and previous and previous != 0:
-                        return f"{(current - previous) / previous:+.2%}"
-                    return "N/A"
+                # 计算 YoY (与第 5 个数据比，即去年同期)
+                yoy_str = "N/A"
+                if revs[0] and revs[4]:
+                    yoy_str = f"{(revs[0] - revs[4]) / revs[4]:+.2%}"
 
-                qoq = calc_growth(rev_values[0], rev_values[1])  # 环比
-                yoy = calc_growth(rev_values[0], rev_values[4])  # 同比 (与第5个数据比)
+                results.append({
+                    "Symbol": symbol,
+                    "Report_Date": valid_df.index[0].strftime('%Y-%m-%d'),
+                    "Rev_Latest": revs[0],
+                    "Rev_Q-1": revs[1],
+                    "Rev_Q-2": revs[2],
+                    "Rev_Q-3": revs[3],
+                    "QoQ": qoq_str,
+                    "YoY": yoy_str
+                })
+        except Exception as e:
+            print(f"{symbol} 处理失败: {e}")
+            continue
 
-                # --- 构建结果行 ---
-                # 使用具体日期作为表头，增强直观性
-                row = {
-                    "Symbol": symbol,
-                    "Report_Date": date_labels[0],
-                    "Revenue_Latest": rev_values[0],
-                    f"Q-1 ({date_labels[1]})": rev_values[1],
-                    f"Q-2 ({date_labels[2]})": rev_values[2],
-                    f"Q-3 ({date_labels[3]})": rev_values[3],
-                    "QoQ": qoq,
-                    "YoY": yoy
-                }
-                results.append(row)
-        except Exception as e:
-            print(f"❌ {symbol} 处理过程中出错: {e}")
-            continue
-
-    # --- 保存与输出 ---
-    if results:
-        final_df = pd.DataFrame(results)
-        
-        # 针对营收列进行数字格式锁定，防止科学计数法
-        # 获取所有以 "Rev" 或 "(" 开头的营收数据列
-        numeric_cols = [c for c in final_df.columns if "Rev" in c or "(" in c]
-        for col in numeric_cols:
-            final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
-        
-        # 保存为 CSV
-        # float_format='%.0f' 强制不保留小数位且不使用科学计数法
-        final_df.to_csv("report.csv", index=False, float_format='%.0f')
-        
-        print("\n" + "="*30)
-        print("🚀 分析完成！生成的报告预览：")
-        print(final_df.to_markdown(index=False))
-        print("="*30)
-    else:
-        print("📭 未能找到符合要求的数据，未生成报告。")
+    # --- 强力保存逻辑 (优化版) ---
+    if results:
+        final_df = pd.DataFrame(results)
+        
+        # 强制转换营收列为数字，并处理缺失值
+        cols_to_fix = ["Rev_Latest", "Rev_Q-1", "Rev_Q-2", "Rev_Q-3"]
+        for col in cols_to_fix:
+            # errors='coerce' 会把无法转的变成 NaN
+            final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
+        
+        # 导出设置：
+        # 1. float_format='%.0f' 保证不出现小数点和 E+
+        # 2. quoting=1 (csv.QUOTE_NONNUMERIC) 确保长数字被正确对待
+        final_df.to_csv("report.csv", index=False, float_format='%.0f')
+        
+        print("✅ 格式优化完成！")
+        print(final_df.to_markdown(index=False))
+    else:
+        print("未找到符合日期要求的数据。")
 
 if __name__ == "__main__":
-    run_analysis()
+    run_analysis()
